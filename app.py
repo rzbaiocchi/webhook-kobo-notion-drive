@@ -147,7 +147,14 @@ def gerar_titulo(obra_nome, obra_id):
         logger.error(f"[TÍTULO] Erro: {e}")
         return f"{obra_nome} - 001"
 
-@app.route("/webhook_kobo", methods=["POST"])
+@app.route("/", methods=["POST"])
+def kobo_webhook():
+    data = request.get_json(force=True)
+    print("Payload recebido do Kobo:", data)
+    return jsonify({"status": "ok"}), 200
+
+
+
 def receber_dados():
     try:
         logger.info(f"[REQUEST] Headers: {dict(request.headers)}")
