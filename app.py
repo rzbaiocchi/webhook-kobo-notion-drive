@@ -73,7 +73,7 @@ def query_notion_database(database_id, filter_dict):
 def upload_para_drive(filename):
     logger.info(f"[DRIVE] Iniciando upload para arquivo: {filename}")
     try:
-        # Constrói URL direta do Kobo (padrão para attachments)
+        # URL direta Kobo para attachment
         base_url = "https://kf.kobotoolbox.org/attachment/original"
         download_url = f"{base_url}?media_file={filename}"
         logger.info(f"[DRIVE] URL construída: {download_url}")
@@ -81,15 +81,24 @@ def upload_para_drive(filename):
         diretorio = "fotos_recebidas"
         if not os.path.exists(diretorio):
             os.makedirs(diretorio)
-        caminho = os.path.join(diretorio, os.path.basename(filename))  # Usa só nome do arquivo
+        caminho = os.path.join(diretorio, os.path.basename(filename))
 
-        headers = {'Authorization': f'Bearer {KOBO_TOKEN}'}
+        # Header correto para Kobo API v2: Token (não Bearer)
+        token_to_use = KOBO_MEDIA_TOKEN if KOBO_MEDIA_TOKEN != KOBO_TOKEN else KOBO_TOKEN
+        headers = {'Authorization': f'Token {token_to_use}'}
+        logger.info(f"[DRIVE] Usando header: Authorization: Token ******")
 
         response = requests.get(download_url, headers=headers, stream=True, timeout=60)
         logger.info(f"[DRIVE] Status download: {response.status_code}")
 
         if response.status_code != 200:
-            logger.error(f"[DRIVE] Falha download: {response.status_code} - {response.text[:500]}")
+            logger.warning(f"[DRIVE] Falha com Token ({response.status_code}): {response.text[:500]}")
+            logger.info("[DRIVE] Fallback: tentativa sem header")
+            response = requests.get(download_url, stream=True, timeout=60)
+            logger.info(f"[DRIVE] Status fallback: {response.status_code}")
+
+        if response.status_code != 200:
+            logger.error(f"[DRIVE] Todas tentativas falharam: {response.status_code} - {response.text[:500]}")
             return None
 
         with open(caminho, 'wb') as f:
@@ -104,7 +113,6 @@ def upload_para_drive(filename):
         link = f"https://drive.google.com/file/d/{file_id}/view"
         logger.info(f"[DRIVE] Upload sucesso: {link}")
 
-        # Cleanup
         if os.path.exists(caminho):
             os.remove(caminho)
 
@@ -113,7 +121,7 @@ def upload_para_drive(filename):
         logger.error(f"[DRIVE] Exceção: {str(e)}")
         return None
 
-# Funções Notion (mantidas)
+# Funções Notion
 def obter_usuario_por_login(login):
     try:
         response = query_notion_database(NOTION_DB_USUARIOS, {"property": "Título", "title": {"equals": login}})
