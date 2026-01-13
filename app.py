@@ -133,7 +133,7 @@ def obter_obra_id(obra_nome):
             return resultados[0]["id"]
         else:
             logger.warning(f"[NOTION] Obra não encontrada: {obra_nome}")
-            return None  # Não cria automaticamente — retorna None para erro
+            return None
     except Exception as e:
         logger.error(f"[NOTION] Erro obra: {e}")
         return None
@@ -147,18 +147,11 @@ def gerar_titulo(obra_nome, obra_id):
         logger.error(f"[TÍTULO] Erro: {e}")
         return f"{obra_nome} - 001"
 
-@app.route("/", methods=["POST"])
-def kobo_webhook():
-    data = request.get_json(force=True)
-    print("Payload recebido do Kobo:", data)
-    return jsonify({"status": "ok"}), 200
-
-
-
+@app.route("/webhook_kobo", methods=["POST"])
 def receber_dados():
     try:
         logger.info(f"[REQUEST] Headers: {dict(request.headers)}")
-        logger.info(f"[REQUEST] Body: {request.get_data()}")
+        logger.info(f"[REQUEST] Body: {request.get_data(as_text=True)}")
 
         dados = request.get_json()
         if not dados:
@@ -175,12 +168,11 @@ def receber_dados():
 
         obra_id = obter_obra_id(obra)
         if not obra_id:
-            return jsonify({"erro": "Obra não encontrada"}), 400  # Erro se obra não existir
+            return jsonify({"erro": "Obra não encontrada"}), 400
 
         titulo = gerar_titulo(obra, obra_id)
         usuario_id = obter_usuario_por_login(dados.get("_submitted_by", ""))
 
-        # Processamento de múltiplas fotos usando _attachments
         links_fotos = []
         attachments = dados.get("_attachments", [])
         for attachment in attachments:
