@@ -56,7 +56,7 @@ if not creds.valid:
     creds.refresh(Request())
 drive_service = build('drive', 'v3', credentials=creds)
 
-# Função custom para query em database (bypass do problema do SDK)
+# Função custom para query em database
 def query_notion_database(database_id, filter_dict):
     url = f"https://api.notion.com/v1/databases/{database_id}/query"
     headers = {
@@ -73,41 +73,50 @@ def query_notion_database(database_id, filter_dict):
         return {"results": []}
 
 def upload_para_drive(nome_arquivo, download_url):
+    logger.info(f"[DRIVE] Iniciando upload para arquivo: {nome_arquivo}, URL: {download_url}")
     try:
         diretorio = "fotos_recebidas"
         if not os.path.exists(diretorio):
             os.makedirs(diretorio)
+            logger.info(f"[DRIVE] Diretório criado: {diretorio}")
         caminho = os.path.join(diretorio, nome_arquivo)
+        logger.info(f"[DRIVE] Caminho local: {caminho}")
 
-        headers = {}
-        auth = None
-        if KOBO_USERNAME and KOBO_PASSWORD:
-            auth = HTTPDigestAuth(KOBO_USERNAME, KOBO_PASSWORD)
-        elif KOBO_MEDIA_TOKEN and KOBO_MEDIA_TOKEN != KOBO_TOKEN:
+        headers = {'Authorization': f'Bearer {KOBO_TOKEN}'}
+        if KOBO_MEDIA_TOKEN != KOBO_TOKEN:
             headers = {'Authorization': f'Bearer {KOBO_MEDIA_TOKEN}'}
-        elif KOBO_TOKEN:
-            headers = {'Authorization': f'Bearer {KOBO_TOKEN}'}
+            logger.info(f"[DRIVE] Usando KOBO_MEDIA_TOKEN para download")
 
-        response = requests.get(download_url, headers=headers, auth=auth, stream=True, timeout=30)
+        auth = HTTPDigestAuth(KOBO_USERNAME, KOBO_PASSWORD) if KOBO_USERNAME and KOBO_PASSWORD else None
+
+        response = requests.get(download_url, headers=headers, auth=auth, stream=True, timeout=60)
+        logger.info(f"[DRIVE] Status download: {response.status_code}")
+
         if response.status_code != 200:
-            logger.error(f"[DRIVE] Falha ao baixar {nome_arquivo}: {response.status_code}")
+            logger.error(f"[DRIVE] Falha download: {response.status_code} - {response.text[:500]}")
             return None
 
         with open(caminho, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
+        logger.info(f"[DRIVE] Download concluído, tamanho: {os.path.getsize(caminho)} bytes")
 
         media = MediaFileUpload(caminho, resumable=True)
         arquivo_metadata = {'name': nome_arquivo, 'parents': [DRIVE_FOLDER_ID]}
         arquivo = drive_service.files().create(body=arquivo_metadata, media_body=media, fields='id').execute()
         file_id = arquivo.get('id')
         link = f"https://drive.google.com/file/d/{file_id}/view"
-        logger.info(f"[DRIVE] Upload concluído: {link}")
+        logger.info(f"[DRIVE] Upload sucesso: {link}")
+
+        # Cleanup temporário
+        os.remove(caminho)
         return link
+
     except Exception as e:
-        logger.error(f"[DRIVE] Erro no upload: {e}")
+        logger.error(f"[DRIVE] Exceção no upload: {str(e)}")
         return None
 
+# Funções Notion (mantidas)
 def obter_usuario_por_login(login):
     try:
         response = query_notion_database(NOTION_DB_USUARIOS, {"property": "Título", "title": {"equals": login}})
@@ -151,7 +160,8 @@ def gerar_titulo(obra_nome, obra_id):
 def receber_dados():
     try:
         logger.info(f"[REQUEST] Headers: {dict(request.headers)}")
-        logger.info(f"[REQUEST] Body: {request.get_data(as_text=True)}")
+        body_text = request.get_data(as_text=True)
+        logger.info(f"[REQUEST] Body completo: {body_text[:1000]}")  # Log parcial para debug
 
         dados = request.get_json()
         if not dados:
@@ -175,13 +185,17 @@ def receber_dados():
 
         links_fotos = []
         attachments = dados.get("_attachments", [])
+        logger.info(f"[DRIVE] Número de attachments: {len(attachments)}")
         for attachment in attachments:
             filename = attachment.get("filename")
             download_url = attachment.get("download_url")
+            logger.info(f"[DRIVE] Processando attachment: {filename} - URL: {download_url}")
             if filename and download_url:
                 link = upload_para_drive(filename, download_url)
                 if link:
                     links_fotos.append(f"Foto: {link}")
+                else:
+                    logger.warning(f"[DRIVE] Upload falhou para {filename}")
 
         propriedades = {
             "Título": {"title": [{"text": {"content": titulo}}]},
