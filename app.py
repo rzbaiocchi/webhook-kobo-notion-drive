@@ -44,8 +44,6 @@ NOTION_DB_OBRAS = os.getenv("NOTION_DB_OBRAS")
 DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 KOBO_TOKEN = os.getenv("KOBO_TOKEN")
 KOBO_MEDIA_TOKEN = os.getenv("KOBO_MEDIA_TOKEN", KOBO_TOKEN)
-KOBO_USERNAME = os.getenv("KOBO_USERNAME")
-KOBO_PASSWORD = os.getenv("KOBO_PASSWORD")
 
 # Initialize clients
 notion = Client(auth=NOTION_TOKEN)
@@ -72,31 +70,26 @@ def query_notion_database(database_id, filter_dict):
         logger.error(f"[NOTION] Query error {response.status_code}: {response.text}")
         return {"results": []}
 
-def upload_para_drive(nome_arquivo, download_url):
-    logger.info(f"[DRIVE] Iniciando processamento para {nome_arquivo}")
-    logger.info(f"[DRIVE] URL completa: {download_url}")
+def upload_para_drive(filename):
+    logger.info(f"[DRIVE] Iniciando upload para arquivo: {filename}")
     try:
+        # Constrói URL direta do Kobo (padrão para attachments)
+        base_url = "https://kf.kobotoolbox.org/attachment/original"
+        download_url = f"{base_url}?media_file={filename}"
+        logger.info(f"[DRIVE] URL construída: {download_url}")
+
         diretorio = "fotos_recebidas"
         if not os.path.exists(diretorio):
             os.makedirs(diretorio)
-        caminho = os.path.join(diretorio, nome_arquivo)
+        caminho = os.path.join(diretorio, os.path.basename(filename))  # Usa só nome do arquivo
 
-        # Tentativa 1: com token (prioriza MEDIA_TOKEN se diferente)
-        headers = {'Authorization': f'Bearer {KOBO_MEDIA_TOKEN}' if KOBO_MEDIA_TOKEN != KOBO_TOKEN else f'Bearer {KOBO_TOKEN}'}
-        logger.info(f"[DRIVE] Tentativa 1 com headers: {headers}")
+        headers = {'Authorization': f'Bearer {KOBO_TOKEN}'}
 
         response = requests.get(download_url, headers=headers, stream=True, timeout=60)
-        logger.info(f"[DRIVE] Status tentativa 1: {response.status_code}")
+        logger.info(f"[DRIVE] Status download: {response.status_code}")
 
         if response.status_code != 200:
-            logger.warning(f"[DRIVE] Falha com token ({response.status_code}): {response.text[:500]}")
-            # Fallback: tentativa 2 sem autenticação
-            logger.info("[DRIVE] Tentativa 2 sem autenticação")
-            response = requests.get(download_url, stream=True, timeout=60)
-            logger.info(f"[DRIVE] Status tentativa 2: {response.status_code}")
-
-        if response.status_code != 200:
-            logger.error(f"[DRIVE] Todas tentativas falharam: {response.status_code} - {response.text[:500]}")
+            logger.error(f"[DRIVE] Falha download: {response.status_code} - {response.text[:500]}")
             return None
 
         with open(caminho, 'wb') as f:
@@ -105,7 +98,7 @@ def upload_para_drive(nome_arquivo, download_url):
         logger.info(f"[DRIVE] Download sucesso, tamanho: {os.path.getsize(caminho)} bytes")
 
         media = MediaFileUpload(caminho, resumable=True)
-        arquivo_metadata = {'name': nome_arquivo, 'parents': [DRIVE_FOLDER_ID]}
+        arquivo_metadata = {'name': os.path.basename(filename), 'parents': [DRIVE_FOLDER_ID]}
         arquivo = drive_service.files().create(body=arquivo_metadata, media_body=media, fields='id').execute()
         file_id = arquivo.get('id')
         link = f"https://drive.google.com/file/d/{file_id}/view"
@@ -117,7 +110,7 @@ def upload_para_drive(nome_arquivo, download_url):
 
         return link
     except Exception as e:
-        logger.error(f"[DRIVE] Exceção geral: {str(e)}")
+        logger.error(f"[DRIVE] Exceção: {str(e)}")
         return None
 
 # Funções Notion (mantidas)
@@ -165,7 +158,7 @@ def receber_dados():
     try:
         logger.info(f"[REQUEST] Headers: {dict(request.headers)}")
         body_text = request.get_data(as_text=True)
-        logger.info(f"[REQUEST] Body parcial: {body_text[:1000]}")  # Log parcial
+        logger.info(f"[REQUEST] Body parcial: {body_text[:1000]}")
 
         dados = request.get_json()
         if not dados:
@@ -191,10 +184,10 @@ def receber_dados():
         attachments = dados.get("_attachments", [])
         logger.info(f"[DRIVE] Attachments encontrados: {len(attachments)}")
         for attachment in attachments:
-            filename = attachment.get("filename", "unknown.jpg")
-            download_url = attachment.get("download_url")
-            if download_url:
-                link = upload_para_drive(filename, download_url)
+            filename = attachment.get("filename")
+            if filename:
+                logger.info(f"[DRIVE] Processando filename: {filename}")
+                link = upload_para_drive(filename)
                 if link:
                     links_fotos.append(f"Foto: {link}")
 
